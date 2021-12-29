@@ -2,6 +2,11 @@
 #include <TickTwo.h>
 #include "Adafruit_MAX31855.h"
 
+/* ATS: Automatic Transfer Switch - dry contacts for the growatt
+ * ATX / AT: AutoTransformer
+ * NSC: Neutral Safety Contactor
+ */
+
 // Pins
 const int MAXDO = 12; // D6 connects to 'DO' data out of MAX31855
 const int MAXCS = 15; // D8 connects to 'CS' of MAX31855
@@ -10,12 +15,12 @@ Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
 
 // Timers
 void getTemp();
-void connectAt();
+void goOffGrid();
 void ledBlink();
 TickTwo cronTemp(getTemp, 2000, 0, MILLIS); // temp read every 2s, indefinitely
 TickTwo cronTempBoot(getTemp, 250, 40, MILLIS); // read temp every 1/4s, 40 times (10s for bootup)
-TickTwo cronAtxBoot(connectAt, 250, 40, MILLIS); // bootstrap atx read every 1/4s, 40 times (10s for bootup)
-TickTwo cronLed(ledBlink, 50, 0, MILLIS); // blink led every 1/2s, indefinitely
+TickTwo cronGoOffGrid(goOffGrid, 250, 40, MILLIS); // bootstrap atx read every 1/4s, 40 times (10s for bootup)
+TickTwo cronLed(ledBlink, 100, 0, MILLIS); // blink led every 1/2s, indefinitely
 
 // Globals
 const int ledEsp = 2; // by the antenna
@@ -26,12 +31,14 @@ bool ledMcuState;
 volatile bool tempAlarmState = false; // true = in alarm state
 double currentTemp; // MAX31855 will read 0.0F if it is disconnected
 double tempThresh = 80.0; // temp above which alarm is triggered
-double tempHyst = 3.0; // hysteresis, must be positive double that is < tempThresh
+double tempHyst = 1.5; // hysteresis, must be positive double that is < tempThresh
 
 const int atsPin = 4; // D2 input pullup, triggers when connected to GND of NodeMCU
-volatile bool atsState; // defaults to true or 1, meaning dry contact loop is OPEN (on-grid)
+volatile bool atsState; // true = on-grid (dry contact loop open)
 const int atsDebounceDelay = 1000; // 50ms debounce filter
 volatile long lastAtsDebounceTime = 0; // last millis() time ats debounce was triggered
+
+volatile bool nscState = false; // neutral safety contactor state, default this to false (disconnected)
 
 bool atxState = false; // autotransformer state, true = on, false = off
 
@@ -58,12 +65,16 @@ void setup() {
   Serial.print("Initializing 1 sensor...");
   pinMode(ledEsp, OUTPUT);
   pinMode(atsPin, INPUT_PULLUP);
-
-  cronTemp.start();
-  cronTempBoot.start();
-  cronAtxBoot.start();
   
   atsState = digitalRead(atsPin);
+
+  // if dry contact is open, attempt to auto-bootstrap system
+  if (!atsState) {
+    cronTempBoot.start();
+    cronGoOffGrid.start();
+  }
+
+  cronTemp.start();
 
   attachInterrupt(digitalPinToInterrupt(atsPin), atsAction, CHANGE);
   if (!thermocouple.begin()) {
@@ -75,7 +86,8 @@ void setup() {
 
 void loop() {
   cronTemp.update();
-  cronAtxBoot.update();
+  cronTempBoot.update();
+  cronGoOffGrid.update();
   cronLed.update();
 }
 
@@ -98,13 +110,10 @@ ICACHE_RAM_ATTR void atsAction(){
     atsState = atsReading;
     if (atsState) {
       Serial.println("ON grid");
-      cronLed.stop();
-      ledOn();
+      goOnGrid();
     } else {
       Serial.println("OFF grid");
-//      ledOff();
-      ledOff();
-      cronLed.start();
+      goOffGrid();
     }
   }
 }
@@ -134,22 +143,28 @@ void handleTempAlarm() {
   Serial.println("Over temp!");
   tempAlarmState = true;
   disconnectAt();
+  disconnectNsc();
 }
 
 void handleTempDisAlarm() {
   Serial.println("Resetting from overtemp state");
   tempAlarmState = false;
   connectAt();
+  connectNsc();
 }
 
-void disconnectAt() {
-  if (atxState) {
-    // TODO: flip AT relay pin OFF
-    Serial.println("Disconnecting AT relay");
-    atxState = false;
-  } else {
-    Serial.println("AT already disconnected");
-  }
+void goOnGrid() {
+  disconnectAt();
+  connectNsc();
+  cronLed.stop();
+  ledOn();
+}
+
+void goOffGrid() {
+  connectAt();
+  connectNsc();
+  ledOff();
+  cronLed.start();
 }
 
 void connectAt() {
@@ -165,5 +180,35 @@ void connectAt() {
     // TODO: flip AT relay pin ON
     Serial.println("Connecting AT relay");
     atxState = true;
+    cronTempBoot.stop();
+    cronGoOffGrid.stop();
+  }
+}
+
+void disconnectAt() {
+  if (atxState) {
+    // TODO: flip AT relay pin OFF
+    Serial.println("Disconnecting AT relay");
+    atxState = false;
+  } else {
+    Serial.println("AT already disconnected");
+  }
+}
+
+void connectNsc() {
+  if (!nscState) {
+    Serial.println("Connecting NSC");
+    nscState = true; 
+  } else {
+    Serial.println("NSC already connected, doing nothing...");
+  }
+}
+
+void disconnectNsc() {
+  if (nscState) {
+    Serial.println("Disonnecting NSC");
+    nscState = false;
+  } else {
+    Serial.println("NSC already disconnected, doing nothing...");
   }
 }
