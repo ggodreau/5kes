@@ -16,12 +16,15 @@ const int MAXCLK = 14; // D5 connects to 'CLK' of MAX31855
 Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
 
 // Globals
-bool tempAlarmState = false; // true = in alarm state
+volatile bool tempAlarmState = false; // true = in alarm state
+double currentTemp; // MAX31855 will read 0.0F if it is disconnected
 double tempThresh = 80.0; // temp above which alarm is triggered
 double tempHyst = 3.0; // hysteresis, must be positive double that is < tempThresh
 
 const int atsPin = 4; // D2 input pullup, triggers when connected to GND of NodeMCU
 bool atsState = false;
+
+bool atxState = false; // autotransformer state, true = on, false = off
 
 // Timer: Auxiliary variables
 //unsigned long now = millis();
@@ -87,19 +90,19 @@ void loop() {
 
 void getTemp() {
 //  Serial.println(thermocouple.readInternal());
-  double f = thermocouple.readFahrenheit();
-  if (isnan(f)) {
+  currentTemp = thermocouple.readFahrenheit();
+  if (isnan(currentTemp)) {
     Serial.println("Something wrong with thermocouple!");
   } else {
     Serial.print("F = ");
-    Serial.println(f);
+    Serial.println(currentTemp);
 
     if (tempAlarmState == false) {
-      if (f > tempThresh) {
+      if (currentTemp > tempThresh) {
         handleTempAlarm();
       }
     } else {
-      if (f < (tempThresh - tempHyst)) {
+      if (currentTemp < (tempThresh - tempHyst)) {
         handleTempDisAlarm();
       }
     }
@@ -119,11 +122,17 @@ void handleTempDisAlarm() {
 }
 
 void disconnectAt() {
-  // TODO
+  // TODO: flip AT relay pin OFF
   Serial.println("Disconnecting AT relay");
+  atxState = false;
 }
 
 void connectAt() {
-  // TODO
-  Serial.println("Connecting AT relay");
+  if (!currentTemp) {
+    Serial.println("Cannot turn on AT without a valid temp reading");
+  } else {
+    // TODO: flip AT relay pin ON
+    Serial.println("Connecting AT relay");
+    atxState = true;
+  }
 }
