@@ -22,7 +22,9 @@ double tempThresh = 80.0; // temp above which alarm is triggered
 double tempHyst = 3.0; // hysteresis, must be positive double that is < tempThresh
 
 const int atsPin = 4; // D2 input pullup, triggers when connected to GND of NodeMCU
-bool atsState = false;
+volatile bool atsState; // defaults to true or 1, meaning dry contact loop is OPEN (on-grid)
+const int atsDebounceDelay = 1000; // 50ms debounce filter
+volatile long lastAtsDebounceTime = 0; // last millis() time ats debounce was triggered
 
 bool atxState = false; // autotransformer state, true = on, false = off
 
@@ -41,42 +43,17 @@ void ledOff(){                        // this is your callback function
   digitalWrite(LED_BUILTIN, HIGH);
 }
 
-ICACHE_RAM_ATTR void atsAction(){                        // this is your callback function
-  Serial.println("------ ats called!");
-  int atsReading = digitalRead(atsPin);
-  if (atsReading == 1) {
-    atsState = true;
-    Serial.println("ATS on, state: " + String(atsState) + " pin read: " + String(atsReading));
-  } else if (atsReading == 0) {
-    atsState = false;
-    Serial.println("ATS on, state: " + String(atsState) + " pin read: " + String(atsReading));
-  }
-//  startTimer = true;
-//  lastTrigger = millis();
-}
-
-
 void setup() {
   Serial.begin(9600);
-  //SPI.begin();
-
   while (!Serial) delay(1); // wait for Serial on Leonardo/Zero, etc
-
   Serial.println("MAX31855 1 test");
-  // wait for MAX chip to stabilize
   delay(2000);
   Serial.print("Initializing 1 sensor...");
-
   pinMode(LED_BUILTIN, OUTPUT);
-  
   cronTemp.start();
-  
-//  everyOn.attach_ms(500,ledOn); // "register" your callback
-//  everyOff.attach_ms(800,ledOff); // "register" your callback
-  
   pinMode(atsPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(atsPin), atsAction, RISING);
-  
+  atsState = digitalRead(atsPin);
+  attachInterrupt(digitalPinToInterrupt(atsPin), atsAction, CHANGE);
   if (!thermocouple.begin()) {
     Serial.println("ERROR.");
     while (1) delay(10);
@@ -86,6 +63,33 @@ void setup() {
 
 void loop() {
   cronTemp.update();
+}
+
+ICACHE_RAM_ATTR void atsAction(){
+  int atsReading = digitalRead(atsPin);
+  Serial.println("atsReading: " + String(atsReading) + " atsState: " + String(atsState));
+
+  if (atsReading == atsState) {
+//    Serial.println("atsReading == atsState");
+    return;
+  }
+  
+//  Serial.println("atsReading != atsState");
+  boolean debounce = false;
+
+  if ((millis() - lastAtsDebounceTime) <= atsDebounceDelay) {
+    debounce = true;
+  }
+  
+  lastAtsDebounceTime = millis();
+  
+  if (debounce) {
+    Serial.println("less than debounce time, keeping state at: " + String(atsState));
+    return;
+  } else {
+    Serial.println("setting state to: " + String(atsReading));
+    atsState = atsReading;
+  }
 }
 
 void getTemp() {
