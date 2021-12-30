@@ -19,7 +19,7 @@ void getAmps(); // neutral current
 void goOffGrid();
 void ledBlink(); // visual indicator for when system transitions to off-grid mode (on grid = steady, off = blinking)
 TickTwo cronTemp(getTemp, 2000, 0, MILLIS); // temp read every 2s, indefinitely
-TickTwo cronAmps(getAmps, 500, 0, MILLIS); // neutral current read every 1/2s, indefinitely
+TickTwo cronAmps(getAmps, 500, 0, MILLIS); // neutral current read every 1/2s, indefinitely (sensor updates every second)
 TickTwo cronTempBoot(getTemp, 250, 40, MILLIS); // read temp every 1/4s, 40 times (10s for bootup)
 TickTwo cronGoOffGrid(goOffGrid, 250, 40, MILLIS); // bootstrap atx read every 1/4s, 40 times (10s for bootup)
 TickTwo cronLed(ledBlink, 500, 0, MILLIS); // blink led every 1/2s, indefinitely (off-grid indicator led)
@@ -49,12 +49,12 @@ volatile bool nscState = false; // neutral safety contactor state, default this 
 
 bool atxState = false; // autotransformer state, true = on, false = off
 
-void ledOn(){                        // this is your callback function
+void ledOn(){
 //  Serial.println("led on");
   digitalWrite(ledEsp, LOW);
 }
 
-void ledOff(){                        // this is your callback function
+void ledOff(){
 //  Serial.println("led off");
   digitalWrite(ledEsp, HIGH);
 }
@@ -67,9 +67,8 @@ void ledBlink() {
 void setup() {
   Serial.begin(9600);
   while (!Serial) delay(1); // wait for Serial on Leonardo/Zero, etc
-  Serial.println("MAX31855 1 test");
+  Serial.println("Booting...");
   delay(2000);
-  Serial.print("Initializing 1 sensor...");
   pinMode(ledEsp, OUTPUT);
   pinMode(atsPin, INPUT_PULLUP);
   
@@ -85,11 +84,12 @@ void setup() {
   cronAmps.start();
 
   attachInterrupt(digitalPinToInterrupt(atsPin), atsAction, CHANGE);
+  
   if (!thermocouple.begin()) {
-    Serial.println("ERROR.");
+    Serial.println("Unable to start thermocouple");
     while (1) delay(10);
   }
-  Serial.println("DONE.");
+  Serial.println("Booting complete");
 }
 
 void loop() {
@@ -102,7 +102,6 @@ void loop() {
 
 ICACHE_RAM_ATTR void atsAction(){
   int atsReading = digitalRead(atsPin);
-//  Serial.println("atsReading: " + String(atsReading) + " atsState: " + String(atsState));
   if (atsReading == atsState) {
     return;
   }
@@ -128,7 +127,7 @@ ICACHE_RAM_ATTR void atsAction(){
 }
 
 void getTemp() {
-//  Serial.println(thermocouple.readInternal());
+//  Serial.println(thermocouple.readInternal()); // sensor appears to have an additional internal temp sensor. neat
   currentTemp = thermocouple.readFahrenheit();
   if (isnan(currentTemp)) {
     Serial.println("Something wrong with thermocouple!");
@@ -225,8 +224,8 @@ void connectAt() {
 
 void disconnectAt() {
   if (atxState) {
-    // TODO: flip AT relay pin OFF
     Serial.println("Disconnecting AT relay");
+    // TODO: flip AT relay pin OFF
     atxState = false;
   } else {
     Serial.println("AT already disconnected");
@@ -236,6 +235,7 @@ void disconnectAt() {
 void connectNsc() {
   if (!nscState) {
     Serial.println("Connecting NSC");
+    // TODO: flip NSC relay pin ON
     nscState = true; 
   } else {
     Serial.println("NSC already connected, doing nothing...");
@@ -245,6 +245,7 @@ void connectNsc() {
 void disconnectNsc() {
   if (nscState) {
     Serial.println("Disonnecting NSC");
+    // TODO: flip NSC relay pin OFF
     nscState = false;
   } else {
     Serial.println("NSC already disconnected, doing nothing...");
