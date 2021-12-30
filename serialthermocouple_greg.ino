@@ -8,19 +8,21 @@
  */
 
 // Pins
-const int MAXDO = 12; // D6 connects to 'DO' data out of MAX31855
-const int MAXCS = 15; // D8 connects to 'CS' of MAX31855
-const int MAXCLK = 14; // D5 connects to 'CLK' of MAX31855
+const int MAXDO = 12; // D6 of NodeMCU connects to 'DO' data out of MAX31855
+const int MAXCS = 15; // D8 of NodeMCU connects to 'CS' of MAX31855
+const int MAXCLK = 14; // D5 of NodeMCU connects to 'CLK' of MAX31855
 Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
 
 // Timers
-void getTemp();
+void getTemp(); // thermocouple
+void getAmps(); // neutral current
 void goOffGrid();
-void ledBlink();
+void ledBlink(); // visual indicator for when system transitions to off-grid mode (on grid = steady, off = blinking)
 TickTwo cronTemp(getTemp, 2000, 0, MILLIS); // temp read every 2s, indefinitely
+TickTwo cronAmps(getAmps, 500, 0, MILLIS); // neutral current read every 1/2s, indefinitely
 TickTwo cronTempBoot(getTemp, 250, 40, MILLIS); // read temp every 1/4s, 40 times (10s for bootup)
 TickTwo cronGoOffGrid(goOffGrid, 250, 40, MILLIS); // bootstrap atx read every 1/4s, 40 times (10s for bootup)
-TickTwo cronLed(ledBlink, 100, 0, MILLIS); // blink led every 1/2s, indefinitely
+TickTwo cronLed(ledBlink, 500, 0, MILLIS); // blink led every 1/2s, indefinitely (off-grid indicator led)
 
 // Globals
 const int ledEsp = 2; // by the antenna
@@ -32,6 +34,11 @@ volatile bool tempAlarmState = false; // true = in alarm state
 double currentTemp; // MAX31855 will read 0.0F if it is disconnected
 double tempThresh = 80.0; // temp above which alarm is triggered
 double tempHyst = 1.5; // hysteresis, must be positive double that is < tempThresh
+
+volatile bool ampsAlarmState = false; // true = in alarm state
+double currentAmps;
+double ampsThresh = 25.0; // amps above which alarm is triggered
+double ampsHyst = 3.0; // hysteresis, must be positive double that is < ampsThresh
 
 const int atsPin = 4; // D2 input pullup, triggers when connected to GND of NodeMCU
 volatile bool atsState; // true = on-grid (dry contact loop open)
@@ -75,6 +82,7 @@ void setup() {
   }
 
   cronTemp.start();
+  cronAmps.start();
 
   attachInterrupt(digitalPinToInterrupt(atsPin), atsAction, CHANGE);
   if (!thermocouple.begin()) {
@@ -86,6 +94,7 @@ void setup() {
 
 void loop() {
   cronTemp.update();
+  cronAmps.update();
   cronTempBoot.update();
   cronGoOffGrid.update();
   cronLed.update();
@@ -149,6 +158,35 @@ void handleTempAlarm() {
 void handleTempDisAlarm() {
   Serial.println("Resetting from overtemp state");
   tempAlarmState = false;
+  connectAt();
+  connectNsc();
+}
+
+void getAmps() {
+  // TODO: implement method
+  Serial.println("Getting amps...");
+  // TODO: null check from sensor
+  if (ampsAlarmState == false) {
+    if (currentAmps > ampsThresh) {
+      handleAmpsAlarm();
+    }
+  } else {
+    if (currentAmps < (ampsThresh - ampsHyst)) {
+      handleAmpsDisAlarm();
+    }
+  }
+}
+
+void handleAmpsAlarm() {
+  Serial.println("Over current!");
+  ampsAlarmState = true;
+  disconnectAt();
+  disconnectNsc();
+}
+
+void handleAmpsDisAlarm() {
+  Serial.println("Resetting from over current state");
+  ampsAlarmState = false;
   connectAt();
   connectNsc();
 }
